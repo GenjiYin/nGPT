@@ -134,8 +134,8 @@ class Normalize_attention(nn.Module):
 ```
 
 ## MLP of nGPT
-1. You should normalize $W_u$、$W_v$、$W_o$; 
-2. When calculating $u$ and $v$,  we introduce scaling factors $s_u\in R^{d_{MLP}}$ and $s_v\in R^{d_{MLP}}$. 
+1. You should normalize $W_u$、$`W_v`$、$`W_o`$; 
+2. When calculating $`u`$ and $`v`$,  we introduce scaling factors $s_u\in R^{d_{MLP}}$ and $`s_v\in R^{d_{MLP}}`$. 
 
 ```python
 import math

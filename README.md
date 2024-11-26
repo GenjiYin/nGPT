@@ -1,11 +1,11 @@
 # Transformer(decoder-only) & nGPT
 ![图片缺失](/figure/nGPT.png)
 
-Original Transformer is on the left, nGPT on the right. It's note that input of nGPT should be normalized. 
+The original Transformer is on the left, and nGPT is on the right. It's important to note that the input for nGPT should be normalized. 
 
-You can read the paper in website: https://arxiv.org/pdf/2410.01131
+You can read the paper on website: https://arxiv.org/pdf/2410.01131
 ## RoPE
-There's no more specific description than original paper. You can get more information about RoPE by paper website (https://arxiv.org/pdf/2104.09864).
+There is no more detailed description than what is provided in the original paper. You can obtain further information about RoPE by visiting the paper's website (https://arxiv.org/pdf/2104.09864).
 ```python
 def build_rope_matrix(max_seq_len, dim, device):
     """

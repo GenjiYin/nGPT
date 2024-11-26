@@ -31,10 +31,13 @@ def build_rope_matrix(max_seq_len, dim, device):
 
 ## Self-attention of nGPT
 1. You need to normalize $W_q$、$`W_k`$、$`W_v`$、$`W_o`$ so that the computed dot products with $`h`$ can be viewed as cosine similarity between unit norm vectors bounded in [-1, 1]; 
-2. You should also normalize $q$、$k$ ensuring that the dot product of every query and key is under control:
+2. You should also normalize $`q`$、$`k`$ ensuring that the dot product of every query and key is under control:
+
 $$q\leftarrow Norm(q)s_{qk}$$
+
 $$q\leftarrow Norm(k)s_{qk}$$
-where $s_{qk}\in R^{dk}$ is a vector of trainable scaling factors for the i-th head.
+
+where $`s_{qk}\in R^{dk}`$ is a vector of trainable scaling factors for the i-th head.
 
 ```python
 import math

@@ -143,9 +143,6 @@ class Normalize_attention(nn.Module):
 
         self.n_head = n_head
         self.softmax = nn.Softmax(dim=-1)
-
-        # 初始化RoPE张量
-        self.rope_matrix = build_rope_matrix(max_seq_len, d_model // n_head, device).transpose(-2, -1)
     
     def forward(self, data):
         """

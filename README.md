@@ -67,27 +67,6 @@ import math
 import torch
 import torch.nn as nn
 
-def build_rope_matrix(max_seq_len, dim, device='cpu'):
-    """
-    构建RoPE的旋转矩阵
-    :param max_seq_len: 序列长度
-    :param dim: 嵌入维度
-    :param device: 设备（CPU或GPU）
-    :return: 旋转矩阵，形状为 (max_seq_len, dim, dim)
-    """
-    # 定义旋转角度
-    theta = 10000 ** (-torch.arange(0, dim // 2, device=device) * 2 / dim)
-    # 初始化旋转矩阵
-    rope_matrix = torch.zeros((max_seq_len, dim, dim), device=device)
-    # 构建旋转矩阵
-    for m in range(max_seq_len):
-        for i in range(dim // 2):
-            rope_matrix[m, 2 * i, 2 * i] = torch.cos(m * theta[i])
-            rope_matrix[m, 2 * i, 2 * i + 1] = -torch.sin(m * theta[i])
-            rope_matrix[m, 2 * i + 1, 2 * i] = torch.sin(m * theta[i])
-            rope_matrix[m, 2 * i + 1, 2 * i + 1] = torch.cos(m * theta[i])
-    return rope_matrix
-
 class l2_normalize(nn.Module):
     """
     L2正则化
@@ -99,6 +78,49 @@ class l2_normalize(nn.Module):
     def forward(self, data):
         out = data / torch.sqrt((data**2).sum(dim=self.dim, keepdim=True) + 1e-8)
         return out
+
+def sinusoidal_position_embedding(batch_size, nums_head, max_len, output_dim, device):
+    position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(-1)
+    ids = torch.arange(0, output_dim // 2, dtype=torch.float)  # 即公式里的i, i的范围是 [0,d/2]
+    theta = torch.pow(10000, -2 * ids / output_dim)
+
+    embeddings = position * theta  # 即公式里的：pos / (10000^(2i/d))
+
+    embeddings = torch.stack([torch.sin(embeddings), torch.cos(embeddings)], dim=-1)
+
+    embeddings = embeddings.repeat((batch_size, nums_head, *([1] * len(embeddings.shape))))  # 在bs维度重复，其他维度都是1不重复
+
+    # reshape后就是：偶数sin, 奇数cos了
+    embeddings = torch.reshape(embeddings, (batch_size, nums_head, max_len, output_dim))
+    embeddings = embeddings.to(device)
+    return embeddings
+
+def RoPE(q, k):
+    # q,k: (bs, head, max_len, output_dim)
+    batch_size = q.shape[0]
+    nums_head = q.shape[1]
+    max_len = q.shape[2]
+    output_dim = q.shape[-1]
+
+    pos_emb = sinusoidal_position_embedding(batch_size, nums_head, max_len, output_dim, q.device)
+
+    # 看rope公式可知，相邻cos，sin之间是相同的，所以复制一遍。如(1,2,3)变成(1,1,2,2,3,3)
+    cos_pos = pos_emb[...,  1::2].repeat_interleave(2, dim=-1)  # 将奇数列信息抽取出来也就是cos 拿出来并复制
+    sin_pos = pos_emb[..., ::2].repeat_interleave(2, dim=-1)  # 将偶数列信息抽取出来也就是sin 拿出来并复制
+
+    # q,k: (bs, head, max_len, output_dim)
+    q2 = torch.stack([-q[..., 1::2], q[..., ::2]], dim=-1)
+    q2 = q2.reshape(q.shape)  # reshape后就是正负交替了
+
+    # 更新qw, *对应位置相乘
+    q = q * cos_pos + q2 * sin_pos
+
+    k2 = torch.stack([-k[..., 1::2], k[..., ::2]], dim=-1)
+    k2 = k2.reshape(k.shape)
+    # 更新kw, *对应位置相乘
+    k = k * cos_pos + k2 * sin_pos
+
+    return q, k
 
 class Normalize_attention(nn.Module):
     """
@@ -129,22 +151,14 @@ class Normalize_attention(nn.Module):
         """
         data: [batch_size, length, d_model], 输入之前已经标准化好了的
         """
-        # 标准化权重
-        W_q = self.norm_layer_1(self.W_q)   # [n_head, d_model, d_model / n_head]
-        W_k = self.norm_layer_1(self.W_k)
-        W_v = self.norm_layer_1(self.W_v)
-        W_o = self.norm_layer_1(self.W_o)
-
         batch_size, length, d_model = data.size()
         data = data.view(batch_size, 1, length, d_model)
 
-        q = (data@W_q).view(batch_size, self.n_head, length, 1, d_model // self.n_head)
-        q = (q@self.rope_matrix).view(batch_size, self.n_head, length, d_model // self.n_head)    # RoPE位置嵌入
+        q = (data@self.W_q).view(batch_size, self.n_head, length, 1, d_model // self.n_head)
+        k = (data@self.W_k).view(batch_size, self.n_head, length, 1, d_model // self.n_head)
+        q, k = RoPE(q, k)
 
-        k = (data@W_k).view(batch_size, self.n_head, length, 1, d_model // self.n_head)
-        k = (k@self.rope_matrix).view(batch_size, self.n_head, length, d_model // self.n_head)    # RoPE位置嵌入
-
-        v = data@W_v
+        v = data@self.W_v
 
         # 标准化q、k、v
         q = self.norm_layer_2(q) * self.S
@@ -154,7 +168,7 @@ class Normalize_attention(nn.Module):
         mask = torch.tril(torch.ones(length, length), diagonal=0).to(data.device)
         score = score.masked_fill(mask==0, -1e8)
         v = score@v
-        W_o = W_o.transpose(0, 1).contiguous().view(d_model, d_model)
+        W_o = self.W_o.transpose(0, 1).contiguous().view(d_model, d_model)
         v = v.transpose(1, 2).contiguous().view(batch_size, length, d_model)
         return v @ W_o
 ```
